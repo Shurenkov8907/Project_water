@@ -3,6 +3,8 @@ const ctx = canvas.getContext("2d");
 
 const nodes = [];
 const sections = [];
+const MAX_ITERATIONS = 100;
+const MAX_ALLOWED_DISCREPANCY = 0.5; // м
 
 async function loadDiameters() {
   try {
@@ -257,31 +259,22 @@ function drawSection(section) {
   ctx.fillText(`Материал: ${section.material}`, midX, midY + 25);
   ctx.fillText(`Диаметр: ${(section.diameter * 1000).toFixed(0)} мм`, midX, midY + 40);
   
-  // Добавляем отображение расхода, если он рассчитан
   if (section.flow !== undefined) {
     ctx.fillText(`Расход: ${(section.flow * 3600).toFixed(2)} м³/ч`, midX, midY + 55);
-    
-    // Добавляем стрелку для указания направления потока
     drawArrow(startNode, endNode, section.flow);
   }
 }
 
 function drawArrow(startNode, endNode, flow) {
-  // Определяем направление стрелки в зависимости от знака расхода
   const fromNode = flow >= 0 ? startNode : endNode;
   const toNode = flow >= 0 ? endNode : startNode;
   
-  // Координаты середины участка
   const midX = (fromNode.x + toNode.x) / 2;
   const midY = (fromNode.y + toNode.y) / 2;
   
-  // Угол наклона участка
   const angle = Math.atan2(toNode.y - fromNode.y, toNode.x - fromNode.x);
-  
-  // Длина стрелки
   const arrowLength = 15;
   
-  // Координаты концов стрелки
   ctx.beginPath();
   ctx.moveTo(midX, midY);
   ctx.lineTo(
@@ -313,7 +306,6 @@ function computeIncidenceMatrix() {
   const nodeIds = nodes.map(node => node.id).sort((a, b) => a - b);
   const sectionIds = sections.map(section => section.id).sort((a, b) => a - b);
 
-  // Создаем матрицу инцидентности
   const matrix = nodeIds.map(nodeId => {
     return sectionIds.map(sectionId => {
       const section = sections.find(s => s.id === sectionId);
@@ -323,7 +315,6 @@ function computeIncidenceMatrix() {
     });
   });
 
-  // Отображаем матрицу
   displayMatrix(matrix, nodeIds, sectionIds);
 }
 
@@ -331,15 +322,13 @@ function displayMatrix(matrix, nodeIds, sectionIds) {
   const container = document.getElementById("matrixOutput");
   if (!container) return;
 
-  // Создаем таблицу
   const table = document.createElement("table");
   table.border = "1";
   table.style.borderCollapse = "collapse";
   table.style.margin = "20px auto";
 
-  // Заголовок таблицы
   const headerRow = document.createElement("tr");
-  headerRow.appendChild(document.createElement("th")); // Пустая ячейка в углу
+  headerRow.appendChild(document.createElement("th"));
   sectionIds.forEach(id => {
     const th = document.createElement("th");
     th.textContent = `Уч. ${id}`;
@@ -347,7 +336,6 @@ function displayMatrix(matrix, nodeIds, sectionIds) {
   });
   table.appendChild(headerRow);
 
-  // Тело таблицы
   nodeIds.forEach((nodeId, rowIndex) => {
     const row = document.createElement("tr");
     const nodeHeader = document.createElement("th");
@@ -381,7 +369,6 @@ function solveIncidenceMatrix() {
   const nodeIds = nodes.map(node => node.id).sort((a, b) => a - b);
   const sectionIds = sections.map(section => section.id).sort((a, b) => a - b);
 
-  // Построение матрицы A и вектора b (исключаем последний узел для баланса)
   nodeIds.slice(0, -1).forEach(nodeId => {
     const row = [];
     sectionIds.forEach(sectionId => {
@@ -393,17 +380,15 @@ function solveIncidenceMatrix() {
 
     A.push(row);
     const node = nodes.find(n => n.id === nodeId);
-    b.push(node.flowRate / 3600); // Переводим в м³/с
+    b.push(node.flowRate / 3600);
   });
 
-  // Решаем систему
   const x = gaussSolve(A, b);
   if (!x) {
     alert("Система не имеет решений или вырождена.");
     return;
   }
 
-  // Сохраняем результаты в участки
   sectionIds.forEach((id, index) => {
     const section = sections.find(s => s.id === id);
     if (section) {
@@ -411,10 +396,7 @@ function solveIncidenceMatrix() {
     }
   });
 
-  // Отображаем решение
   renderSolutionTable(sectionIds, x);
-  
-  // Перерисовываем сеть с результатами
   drawNetwork();
 }
 
@@ -425,26 +407,21 @@ function gaussSolve(A, b) {
   const M = A.map((row, i) => [...row, b[i]]);
 
   for (let i = 0; i < Math.min(n, m); i++) {
-    // Поиск максимального элемента в колонке
     let maxRow = i;
     for (let k = i + 1; k < n; k++) {
       if (Math.abs(M[k][i]) > Math.abs(M[maxRow][i])) {
         maxRow = k;
       }
     }
-    // Обмен строк
     [M[i], M[maxRow]] = [M[maxRow], M[i]];
 
-    // Проверка на нулевой элемент
     if (Math.abs(M[i][i]) < 1e-12) continue;
 
-    // Нормализация строки
     const div = M[i][i];
     for (let j = i; j <= m; j++) {
       M[i][j] /= div;
     }
 
-    // Вычитание строки
     for (let k = 0; k < n; k++) {
       if (k === i) continue;
       const factor = M[k][i];
@@ -454,7 +431,6 @@ function gaussSolve(A, b) {
     }
   }
 
-  // Проверка на наличие решений
   for (let i = 0; i < n; i++) {
     let allZero = true;
     for (let j = 0; j < m; j++) {
@@ -464,7 +440,7 @@ function gaussSolve(A, b) {
       }
     }
     if (allZero && Math.abs(M[i][m]) > 1e-12) {
-      return null; // Нет решений
+      return null;
     }
   }
 
@@ -553,8 +529,217 @@ function findCycles(adjacency) {
   return cycles;
 }
 
+function findCyclesWithDirections() {
+  const adjacency = buildAdjacencyList(nodes, sections);
+  const cycles = findCycles(adjacency);
+  const cyclesWithDirections = [];
+
+  cycles.forEach(cycle => {
+    const directedCycle = [];
+    for (let i = 0; i < cycle.length; i++) {
+      const node1 = cycle[i];
+      const node2 = cycle[(i + 1) % cycle.length];
+      const section = sections.find(sec => 
+        (sec.startNode === node1 && sec.endNode === node2) || 
+        (sec.startNode === node2 && sec.endNode === node1)
+      );
+      
+      if (section) {
+        const direction = section.startNode === node1 ? 1 : -1;
+        directedCycle.push({
+          sectionId: section.id,
+          direction: direction
+        });
+      }
+    }
+    cyclesWithDirections.push(directedCycle);
+  });
+
+  return cyclesWithDirections;
+}
+
+function calculateHeadLossDiscrepancy(cyclesWithDirections) {
+  const discrepancies = [];
+  
+  cyclesWithDirections.forEach(cycle => {
+    let sumHeadLoss = 0;
+    
+    cycle.forEach(link => {
+      const section = sections.find(s => s.id === link.sectionId);
+      if (!section || section.headLoss === undefined) return;
+      
+      sumHeadLoss += section.headLoss * link.direction;
+    });
+    
+    discrepancies.push(sumHeadLoss);
+  });
+  
+  return discrepancies;
+}
+
+function correctFlows(cyclesWithDirections, discrepancies) {
+  let correctionsApplied = false;
+  
+  cyclesWithDirections.forEach((cycle, cycleIndex) => {
+    const discrepancy = discrepancies[cycleIndex];
+    if (Math.abs(discrepancy) <= MAX_ALLOWED_DISCREPANCY) return;
+    
+    let sumHQ = 0;
+    cycle.forEach(link => {
+      const section = sections.find(s => s.id === link.sectionId);
+      if (!section || section.flow === undefined || section.headLoss === undefined) return;
+      
+      const q = Math.abs(section.flow);
+      sumHQ += section.headLoss / q;
+    });
+    
+    if (sumHQ === 0) return;
+    
+    const deltaQ = -discrepancy / (2 * sumHQ);
+    
+    cycle.forEach(link => {
+      const section = sections.find(s => s.id === link.sectionId);
+      if (!section || section.flow === undefined) return;
+      
+      section.flow += deltaQ * link.direction;
+      correctionsApplied = true;
+    });
+  });
+  
+  return correctionsApplied;
+}
+
+function calculateAllHeadLosses() {
+  sections.forEach(section => {
+    if (section.flow === undefined) return;
+    
+    const diameterMeters = section.diameter;
+    const length = calculateLength(section);
+    const material = section.material;
+    const flowRate = Math.abs(section.flow);
+    
+    const viscosity = 1.31e-6;
+    const velocity = calculateVelocity(diameterMeters, flowRate);
+    const reynolds = (velocity * diameterMeters) / viscosity;
+
+    let roughness;
+    switch (material.toLowerCase()) {
+      case "steel": roughness = 0.00015; break;
+      case "polyethylene": roughness = 0.0000015; break;
+      default: roughness = 0.00015;
+    }
+
+    const lambda = calculateFrictionFactor(reynolds, diameterMeters, roughness);
+    section.headLoss = calculateHeadLoss(diameterMeters, length, flowRate, lambda);
+  });
+}
+
+function performHydraulicCalculation() {
+  // 1. Solve initial flow distribution
+  solveIncidenceMatrix();
+  
+  // 2. Calculate initial head losses
+  calculateAllHeadLosses();
+  
+  // 3. Find cycles with directions
+  const cyclesWithDirections = findCyclesWithDirections();
+  
+  // 4. Iterative balancing process
+  let iteration = 0;
+  let discrepancies = [];
+  let correctionsApplied = false;
+  
+  do {
+    iteration++;
+    
+    // Calculate discrepancies
+    discrepancies = calculateHeadLossDiscrepancy(cyclesWithDirections);
+    
+    // Apply corrections if needed
+    correctionsApplied = correctFlows(cyclesWithDirections, discrepancies);
+    
+    if (!correctionsApplied) break;
+    
+    // Recalculate head losses with new flows
+    calculateAllHeadLosses();
+    
+  } while (iteration < MAX_ITERATIONS && discrepancies.some(d => Math.abs(d) > MAX_ALLOWED_DISCREPANCY));
+  
+  // Display final results
+  renderFinalResults(cyclesWithDirections, discrepancies, iteration);
+  drawNetwork();
+}
+
+function renderFinalResults(cyclesWithDirections, discrepancies, iterations) {
+  const container = document.getElementById("finalResults");
+  if (!container) return;
+  
+  let html = `<h3>Результаты гидравлического расчета (итераций: ${iterations}):</h3>`;
+  
+  // Sections table
+  html += `<table border="1" style="border-collapse: collapse; margin: 10px auto;">
+    <thead>
+      <tr>
+        <th>Участок</th>
+        <th>Расход (м³/ч)</th>
+        <th>Потери напора (м)</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${sections.map(section => `
+        <tr>
+          <td>${section.id}</td>
+          <td>${section.flow !== undefined ? (section.flow * 3600).toFixed(2) : "N/A"}</td>
+          <td>${section.headLoss !== undefined ? section.headLoss.toFixed(3) : "N/A"}</td>
+        </tr>
+      `).join("")}
+    </tbody>
+  </table>`;
+  
+  // Discrepancies table
+  html += `<h4>Невязки напора по кольцам:</h4>
+  <table border="1" style="border-collapse: collapse; margin: 10px auto;">
+    <thead>
+      <tr>
+        <th>Кольцо</th>
+        <th>Невязка (м)</th>
+        <th>Статус</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${discrepancies.map((d, i) => `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${d.toFixed(3)}</td>
+          <td>${Math.abs(d) <= MAX_ALLOWED_DISCREPANCY ? "✓ OK" : "✗ Превышено"}</td>
+        </tr>
+      `).join("")}
+    </tbody>
+  </table>`;
+  
+  container.innerHTML = html;
+}
+
+function addHydraulicCalculationButton() {
+  const button = document.createElement("button");
+  button.textContent = "Выполнить гидравлический расчет";
+  button.onclick = performHydraulicCalculation;
+  button.style.margin = "10px";
+  button.style.padding = "8px 16px";
+  
+  const container = document.getElementById("controls");
+  if (container) {
+    container.appendChild(button);
+  }
+  
+  const resultsDiv = document.createElement("div");
+  resultsDiv.id = "finalResults";
+  document.body.appendChild(resultsDiv);
+}
+
 window.onload = () => {
   loadDiameters();
   loadResults();
   drawNetwork();
+  addHydraulicCalculationButton();
 };
