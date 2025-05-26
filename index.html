@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ввод данных для водоснабжения</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        background: #f9f9f9;
+      }
+
+      header {
+        text-align: center;
+        padding: 20px;
+        background-color: #004080;
+        color: white;
+      }
+
+      main {
+        max-width: 1000px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+
+      canvas {
+        border: 1px solid #333;
+        display: block;
+        margin: 20px auto;
+        background-color: white;
+      }
+
+      .form-section {
+        background: #ffffff;
+        padding: 20px;
+        margin-bottom: 20px;
+        border-radius: 8px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+      }
+
+      form {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+
+      input,
+      select,
+      button {
+        padding: 10px;
+        font-size: 14px;
+      }
+
+      button {
+        cursor: pointer;
+        background-color: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+      }
+
+      button:hover {
+        background-color: #0056b3;
+      }
+
+      .output-section {
+        margin-top: 20px;
+      }
+
+      hr {
+        margin: 30px 0;
+      }
+
+      table {
+        margin: 0 auto;
+        border-collapse: collapse;
+      }
+
+      table,
+      th,
+      td {
+        border: 1px solid #333;
+        padding: 5px 10px;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Схема водоснабжения</h1>
+    </header>
+
+    <main>
+      <section class="form-section">
+        <h2>Добавить узел</h2>
+        <form id="nodeForm">
+          <input type="number" id="nodeId" placeholder="ID узла" required />
+          <input type="number" id="nodeX" placeholder="Координата X" required />
+          <input type="number" id="nodeY" placeholder="Координата Y" required />
+          <input
+            type="number"
+            id="nodeFlowRate"
+            placeholder="Расход м³/ч"
+            required
+          />
+          <button type="button" onclick="addNode()">Добавить узел</button>
+        </form>
+      </section>
+
+      <section class="form-section">
+        <h2>Добавить участок</h2>
+        <form id="sectionForm">
+          <input
+            type="number"
+            id="sectionId"
+            placeholder="ID участка"
+            required
+          />
+          <input
+            type="number"
+            id="startNode"
+            placeholder="Начальный узел"
+            required
+          />
+          <input
+            type="number"
+            id="endNode"
+            placeholder="Конечный узел"
+            required
+          />
+          <select id="sectionMaterial" required>
+            <option value="">Выберите материал</option>
+            <option value="steel">Сталь</option>
+            <option value="polyethylene">Полиэтилен</option>
+          </select>
+          <select id="pipeSelect" required>
+            <option value="">Выберите трубу</option>
+          </select>
+          <select id="sectionDiameter" required>
+            <option value="">Выберите диаметр</option>
+          </select>
+          <button type="button" onclick="addSection()">Добавить участок</button>
+        </form>
+      </section>
+
+      <section class="output-section">
+        <canvas id="waterSupplyCanvas" width="800" height="600"></canvas>
+
+        <div class="output-buttons">
+            <button onclick="computeIncidenceMatrix()">
+              Показать матрицу инцидентности
+            </button>
+            <div id="matrixOutput"></div>
+            <hr>
+            <button onclick="solveIncidenceMatrix()">
+              Решить матрицу инцидентности
+            </button>
+            <div id="solutionTableContainer" style="margin-top: 20px;"></div>
+          </div>
+      </section>
+    </main>
+
+    <script src="main.js"></script>
+  </body>
+</html>
