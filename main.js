@@ -28,7 +28,7 @@ const pipeTypes = []; // Данные из pipes.json
 let nodes = [];
 let pipes = [];
 
-// -------------------- Инициализация --------------------
+
 document.addEventListener("DOMContentLoaded", () => {
   loadPipesJSON();
 
