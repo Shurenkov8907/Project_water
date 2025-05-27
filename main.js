@@ -1,760 +1,660 @@
-const canvas = document.getElementById("waterSupplyCanvas");
-const ctx = canvas.getContext("2d");
-
-const nodes = [];
-const sections = [];
-const MAX_ITERATIONS = 100;
-const MAX_ALLOWED_DISCREPANCY = 0.5; // м
-
-// Загрузка данных о диаметрах труб
-async function loadDiameters() {
-  try {
-    const response = await fetch("./pipes.json");
-    if (!response.ok) throw new Error("Не удалось загрузить pipes.json");
-
-    const data = await response.json();
-    const select = document.getElementById("sectionDiameter");
-    select.innerHTML = '<option value="">Выберите диаметр</option>';
-
-    data.forEach((item) => {
-      const label = item["Обозначение в проекте "].trim();
-      const diameterMeters = parseFloat(
-        item["Dвн - внутренний диаметр, расчетный м"]
-      );
-      if (!isNaN(diameterMeters)) {
-        const option = document.createElement("option");
-        option.value = diameterMeters;
-        option.textContent = label;
-        select.appendChild(option);
-      }
-    });
-  } catch (error) {
-    console.error("Ошибка загрузки данных о диаметрах:", error);
-    alert("Не удалось загрузить данные из pipes.json");
+// -------------------- Классы --------------------
+class Node {
+  constructor(id, x, y, flow) {
+    this.id = parseInt(id);
+    this.x = parseFloat(x);
+    this.y = parseFloat(y);
+    this.flow = parseFloat(flow);
   }
 }
 
-// Добавление узла
-function addNode() {
-  const id = parseInt(document.getElementById("nodeId").value);
-  const x = parseInt(document.getElementById("nodeX").value);
-  const y = parseInt(document.getElementById("nodeY").value);
-  const flowRate = parseFloat(document.getElementById("nodeFlowRate").value); // теперь в л/с
+class Pipe {
+  constructor(startNode, endNode, pipeName = null) {
+    this.startNode = startNode;
+    this.endNode = endNode;
+    this.pipeName = pipeName;
+    this.length = this.calculateLength();
+  }
+  
+  calculateLength() {
+    const dx = this.endNode.x - this.startNode.x;
+    const dy = this.endNode.y - this.startNode.y;
+    return parseFloat(Math.sqrt(dx * dx + dy * dy).toFixed(2));
+  }
+}
 
-  if (isNaN(id) || isNaN(x) || isNaN(y) || isNaN(flowRate)) {
-    alert("Введите корректные данные для узла!");
+// -------------------- Глобальные переменные --------------------
+const pipeTypes = []; // Данные из pipes.json
+let nodes = [];
+let pipes = [];
+
+// -------------------- Инициализация --------------------
+document.addEventListener("DOMContentLoaded", () => {
+  loadPipesJSON();
+
+  // Переключение отображения секции выбора диаметра для пластиковых труб
+  document.getElementById("material").addEventListener("change", function() {
+    document.getElementById("diameterSection").style.display = 
+      this.value === "plastic" ? "block" : "none";
+  });
+
+  document.getElementById("addNodeBtn").addEventListener("click", addNode);
+  document.getElementById("addConnectionBtn").addEventListener("click", addConnection);
+  document.getElementById("buildNetworkBtn").addEventListener("click", buildNetwork);
+  document.getElementById("solveMatrixBtn").addEventListener("click", solveSystem);
+  document.getElementById("toggleDetailedSolutionBtn").addEventListener("click", toggleDetailedSolution);
+});
+
+// -------------------- Загрузка pipes.json --------------------
+function loadPipesJSON() {
+  fetch("pipes.json")
+    .then(response => {
+      if (!response.ok) {
+        throw new Error("Ошибка загрузки pipes.json: " + response.statusText);
+      }
+      return response.json();
+    })
+    .then(data => {
+      pipeTypes.length = 0;
+      const diameterSelect = document.getElementById("diameter");
+      diameterSelect.innerHTML = '';
+      
+      data.forEach(pipe => {
+        pipeTypes.push(pipe);
+        const option = new Option(
+          `${pipe.name} (${pipe.diameter} мм)`, 
+          pipe.name
+        );
+        diameterSelect.add(option);
+      });
+    })
+    .catch(error => {
+      console.error("Ошибка при загрузке JSON:", error);
+      alert("Не удалось загрузить данные о трубах. Проверьте наличие файла pipes.json");
+    });
+}
+
+// -------------------- Добавление узлов --------------------
+function addNode() {
+  const id = document.getElementById("nodeId").value.trim();
+  const x = document.getElementById("nodeX").value.trim();
+  const y = document.getElementById("nodeY").value.trim();
+  const flow = document.getElementById("nodeFlow").value.trim();
+
+  if (!id || !x || !y || !flow) {
+    alert("Заполните все поля узла корректными данными!");
     return;
   }
 
-  if (nodes.some((node) => node.id === id)) {
+  if (nodes.some(node => node.id == id)) {
     alert("Узел с таким ID уже существует!");
     return;
   }
 
-  // Сохраняем расход в л/с, 
-  nodes.push({ id, x, y, flowRate });
-  drawNetwork();
-  document.getElementById("nodeForm").reset();
+  const node = new Node(id, x, y, flow);
+  nodes.push(node);
+
+  const nodeList = document.getElementById("nodeList");
+  if (nodeList) {
+    const li = document.createElement("li");
+    li.textContent = `Узел ${node.id}: (${node.x}, ${node.y}), Расход: ${node.flow} л/с`;
+    nodeList.appendChild(li);
+  }
+
+  updateNodeSelects();
+  clearNodeInputs();
+  buildNetwork();
 }
 
-
-// Добавление участка
-function addSection() {
-  const id = parseInt(document.getElementById("sectionId").value);
-  const startNode = parseInt(document.getElementById("startNode").value);
-  const endNode = parseInt(document.getElementById("endNode").value);
-  const material = document.getElementById("sectionMaterial").value;
-  const diameter = parseFloat(document.getElementById("sectionDiameter").value);
-
-  if (
-    isNaN(id) ||
-    isNaN(startNode) ||
-    isNaN(endNode) ||
-    isNaN(diameter) ||
-    !material
-  ) {
-    alert("Введите корректные данные для участка!");
+function updateNodeSelects() {
+  const startSelect = document.getElementById("startNode");
+  const endSelect = document.getElementById("endNode");
+  startSelect.innerHTML = "";
+  endSelect.innerHTML = "";
+  
+  if (nodes.length === 0) {
+    startSelect.disabled = true;
+    endSelect.disabled = true;
     return;
   }
-
-  if (sections.some((section) => section.id === id)) {
-    alert("Участок с таким ID уже существует!");
-    return;
-  }
-
-  if (
-    !nodes.some((node) => node.id === startNode) ||
-    !nodes.some((node) => node.id === endNode)
-  ) {
-    alert("Один из узлов не существует!");
-    return;
-  }
-
-  sections.push({ id, startNode, endNode, material, diameter });
-  drawNetwork();
-  document.getElementById("sectionForm").reset();
+  
+  startSelect.disabled = false;
+  endSelect.disabled = false;
+  
+  nodes.forEach(node => {
+    const option = new Option(`Узел ${node.id}`, node.id);
+    startSelect.add(option.cloneNode(true));
+    endSelect.add(option.cloneNode(true));
+  });
 }
 
-// Отрисовка сети
-function drawNetwork() {
+function clearNodeInputs() {
+  document.getElementById("nodeId").value = "";
+  document.getElementById("nodeX").value = "";
+  document.getElementById("nodeY").value = "";
+  document.getElementById("nodeFlow").value = "";
+}
+
+// -------------------- Добавление соединений --------------------
+function addConnection() {
+  const material = document.getElementById("material").value;
+  if (material === "steel") {
+    alert("Данные для стальных труб временно недоступны");
+    return;
+  }
+  
+  const startId = document.getElementById("startNode").value;
+  const endId = document.getElementById("endNode").value;
+  const pipeName = document.getElementById("diameter").value;
+
+  if (!startId || !endId || startId === endId) {
+    alert("Выберите два различных узла для соединения");
+    return;
+  }
+
+  const startNode = nodes.find(n => n.id == startId);
+  const endNode = nodes.find(n => n.id == endId);
+  if (!startNode || !endNode) {
+    alert("Ошибка: не найдены выбранные узлы!");
+    return;
+  }
+
+  // Проверка на дубликат соединения
+  const duplicate = pipes.find(pipe => 
+    (pipe.startNode.id == startId && pipe.endNode.id == endId) ||
+    (pipe.startNode.id == endId && pipe.endNode.id == startId)
+  );
+  
+  if (duplicate) {
+    alert("Такое соединение уже существует!");
+    return;
+  }
+
+  const pipe = new Pipe(startNode, endNode, pipeName);
+  pipes.push(pipe);
+
+  const connectionList = document.getElementById("connectionList");
+  if (connectionList) {
+    const li = document.createElement("li");
+    li.textContent = `Соединение: ${startId} → ${endId} | Длина: ${pipe.length} м | Труба: ${pipe.pipeName}`;
+    connectionList.appendChild(li);
+  }
+
+  buildNetwork();
+}
+
+// -------------------- Построение схемы на Canvas --------------------
+function buildNetwork() {
+  const canvas = document.getElementById("networkCanvas");
+  const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Отрисовка участков остается без изменений
-  sections.forEach((section) => {
-    const startNode = nodes.find((node) => node.id === section.startNode);
-    const endNode = nodes.find((node) => node.id === section.endNode);
-    if (!startNode || !endNode) return;
+  // Находим границы сети для масштабирования
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  nodes.forEach(node => {
+    if (node.x < minX) minX = node.x;
+    if (node.x > maxX) maxX = node.x;
+    if (node.y < minY) minY = node.y;
+    if (node.y > maxY) maxY = node.y;
+  });
 
+  // Добавляем отступы
+  const padding = 50;
+  minX -= padding;
+  maxX += padding;
+  minY -= padding;
+  maxY += padding;
+
+  // Масштабируем координаты
+  const scaleX = canvas.width / (maxX - minX);
+  const scaleY = canvas.height / (maxY - minY);
+  const scale = Math.min(scaleX, scaleY);
+
+  function transformX(x) {
+    return (x - minX) * scale;
+  }
+
+  function transformY(y) {
+    return canvas.height - (y - minY) * scale;
+  }
+
+  // Отрисовка труб
+  pipes.forEach(pipe => {
+    const startX = transformX(pipe.startNode.x);
+    const startY = transformY(pipe.startNode.y);
+    const endX = transformX(pipe.endNode.x);
+    const endY = transformY(pipe.endNode.y);
+    
     ctx.beginPath();
-    ctx.moveTo(startNode.x, startNode.y);
-    ctx.lineTo(endNode.x, endNode.y);
-    ctx.strokeStyle = section.material === "steel" ? "green" : "orange";
+    ctx.moveTo(startX, startY);
+    ctx.lineTo(endX, endY);
+    ctx.strokeStyle = "#3498db";
     ctx.lineWidth = 3;
     ctx.stroke();
-
-    const midX = (startNode.x + endNode.x) / 2;
-    const midY = (startNode.y + endNode.y) / 2;
-
+    
+    // Отрисовка отметки длины трубы
+    const midX = (startX + endX) / 2;
+    const midY = (startY + endY) / 2;
+    ctx.fillStyle = "#2c3e50";
     ctx.font = "12px Arial";
-    ctx.fillStyle = "black";
-    ctx.fillText(`Участок ${section.id}`, midX, midY - 10);
-    ctx.fillText(
-      `Длина: ${calculateLength(section).toFixed(2)} м`,
-      midX,
-      midY + 10
-    );
-
-    if (section.flow !== undefined) {
-      ctx.fillText(
-        `Расход: ${section.flow.toFixed(2)} л/с`,
-        midX,
-        midY + 25
-      );
-      drawArrow(startNode, endNode, section.flow);
-    }
+    ctx.fillText(`${pipe.length} м`, midX + 10, midY);
   });
 
-  // Отрисовка узлов (измененная часть)
-  nodes.forEach((node) => {
+  // Отрисовка узлов
+  nodes.forEach(node => {
+    const x = transformX(node.x);
+    const y = transformY(node.y);
+    
+    // Рисуем узел
     ctx.beginPath();
-    ctx.arc(node.x, node.y, 10, 0, 2 * Math.PI);
-    ctx.fillStyle = "blue";
+    ctx.arc(x, y, 10, 0, 2 * Math.PI);
+    ctx.fillStyle = "#e74c3c";
     ctx.fill();
-    ctx.strokeStyle = "black";
+    ctx.strokeStyle = "#c0392b";
+    ctx.lineWidth = 2;
     ctx.stroke();
-
+    
+    // Подпись узла
+    ctx.font = "14px Arial";
+    ctx.fillStyle = "#2c3e50";
+    ctx.fillText(`Узел ${node.id}`, x + 15, y - 15);
+    
+    // Расход
     ctx.font = "12px Arial";
-    ctx.fillStyle = "black";
-    ctx.fillText(`Узел ${node.id}`, node.x + 15, node.y - 10);
-    ctx.fillText(`Расход: ${node.flowRate} л/с`, node.x + 15, node.y + 10); // Теперь отображаем л/с
+    ctx.fillStyle = "#27ae60";
+    ctx.fillText(`${node.flow} л/с`, x + 15, y + 5);
   });
 }
 
-// Расчет длины участка
-function calculateLength(section) {
-  const startNode = nodes.find((node) => node.id === section.startNode);
-  const endNode = nodes.find((node) => node.id === section.endNode);
-  if (!startNode || !endNode) return 0;
-
-  return Math.sqrt(
-    Math.pow(endNode.x - startNode.x, 2) + Math.pow(endNode.y - startNode.y, 2)
-  );
-}
-
-// Отрисовка стрелки направления потока
-function drawArrow(startNode, endNode, flow) {
-  if (isNaN(flow)) return;
-
-  const fromNode = flow >= 0 ? startNode : endNode;
-  const toNode = flow >= 0 ? endNode : startNode;
-
-  const midX = (fromNode.x + toNode.x) / 2;
-  const midY = (fromNode.y + toNode.y) / 2;
-
-  const angle = Math.atan2(toNode.y - fromNode.y, toNode.x - fromNode.x);
-  const arrowLength = 15;
-
-  ctx.beginPath();
-  ctx.moveTo(midX, midY);
-  ctx.lineTo(
-    midX - arrowLength * Math.cos(angle - Math.PI / 6),
-    midY - arrowLength * Math.sin(angle - Math.PI / 6)
-  );
-  ctx.moveTo(midX, midY);
-  ctx.lineTo(
-    midX - arrowLength * Math.cos(angle + Math.PI / 6),
-    midY - arrowLength * Math.sin(angle + Math.PI / 6)
-  );
-  ctx.strokeStyle = "red";
-  ctx.lineWidth = 2;
-  ctx.stroke();
-}
-
-// Расчет скорости потока (в м/с)
-function calculateVelocity(diameterMeters, flowRate) {
-  if (isNaN(diameterMeters)) return 0;
-  if (diameterMeters <= 0) return 0;
-  if (isNaN(flowRate)) return 0;
-
-  // flowRate в л/с, переводим в м³/с (делим на 1000)
-  const flowRateM3 = flowRate / 1000;
-  return (4 * Math.abs(flowRateM3)) / (Math.PI * Math.pow(diameterMeters, 2));
-}
-
-// Расчет коэффициента трения
-function calculateFrictionFactor(reynolds, diameterMeters, material) {
-  if (isNaN(reynolds)) return 0.02;
-  if (reynolds === 0) return 0.02;
-  if (isNaN(diameterMeters)) return 0.02;
-
+// -------------------- Гидравлический расчет --------------------
+function calculateHydraulics(pipe, flowRate) {
+  const material = document.getElementById("material").value;
+  const pipeType = pipeTypes.find(pt => pt.name === pipe.pipeName);
+  
+  if (!pipeType) {
+    console.error("Не найдены данные для трубы:", pipe.pipeName);
+    return {
+      velocity: "N/A",
+      headLoss: "N/A",
+      reynolds: "N/A",
+      lam: 0,
+      diameterMeters: 0
+    };
+  }
+  
+  const diameter = pipeType.diameter;
+  const diameterMeters = diameter / 1000;
+  const flowRateM3 = Math.abs(flowRate) / 1000;
+  
+  const velocity = (4 * flowRateM3) / (Math.PI * Math.pow(diameterMeters, 2));
+  
+  let Re = (velocity * diameterMeters) / 1.31e-6;
+  
   let lam;
   if (material === "steel") {
-    // Формула для стальных труб
-    lam =
-      (0.0159 / Math.pow(diameterMeters, 0.226)) *
-      Math.pow(1.0 + 0.684 / (reynolds * 1.31e-6), 0.226);
+    lam = (0.0159 / Math.pow(diameterMeters, 0.226)) *
+          Math.pow(1.0 + (0.684 / velocity), 0.226);
   } else {
-    // Формула для пластиковых труб
     const Rekv = (500 * diameterMeters) / 0.00014;
-    let b = 1 + Math.log10(reynolds) / Math.log10(Rekv);
+    let b = 1 + (Math.log10(Re) / Math.log10(Rekv));
     b = b > 2 ? 2 : b;
     const logPart = Math.log10((3.7 * diameterMeters) / 0.00014);
-    lam = Math.pow(
-      (0.5 * (b / 2 + (1.312 * (2 - b) * logPart) / (Math.log10(reynolds) - 1)) /
-        logPart,
-      2
-    ));
+    lam = Math.pow((0.5 * ((b / 2) + (1.312 * (2 - b) * logPart / (Math.log10(Re) - 1))) / logPart), 2);
+  }
+  
+  const g = 9.8;
+  const headLoss = lam * Math.pow(velocity, 2) / (2 * g * diameterMeters) * pipe.length;
+  
+  return {
+    velocity: velocity.toFixed(2),
+    headLoss: headLoss.toFixed(2),
+    reynolds: Re.toFixed(0),
+    lam: lam,
+    diameterMeters: diameterMeters
+  };
+}
+
+// -------------------- Решение системы уравнений --------------------
+function solveSystem() {
+  if (nodes.length < 2 || pipes.length === 0) {
+    alert("Добавьте минимум 2 узла и 1 соединение для расчёта.");
+    return;
   }
 
-  return lam;
-}
-
-// Расчет потерь напора (в метрах)
-function calculateHeadLoss(diameterMeters, length, flowRate, material) {
-  if (isNaN(diameterMeters)) return 0;
-  if (isNaN(length)) return 0;
-  if (isNaN(flowRate)) return 0;
+  const mUnknowns = pipes.length;
+  let mat = [];
   
-  const velocity = calculateVelocity(diameterMeters, flowRate);
-  const reynolds = (velocity * diameterMeters) / 1.31e-6;
-  const lam = calculateFrictionFactor(reynolds, diameterMeters, material);
-  
-  const g = 9.81;
-  return ((lam * velocity * velocity) / (2 * g)) * (length / diameterMeters);
-}
+  // Уравнения баланса расходов в узлах
+  for (let i = 1; i < nodes.length; i++) {
+    let row = new Array(mUnknowns + 1).fill(0);
+    
+    pipes.forEach((pipe, j) => {
+      if (pipe.startNode.id === nodes[i].id) {
+        row[j] = -1;
+      } else if (pipe.endNode.id === nodes[i].id) {
+        row[j] = 1;
+      }
+    });
+    
+    row[mUnknowns] = Math.abs(parseFloat(nodes[i].flow));
+    mat.push(row);
+  }
 
-// Расчет всех потерь напора
-function calculateAllHeadLosses() {
-  sections.forEach((section) => {
-    if (isNaN(section.flow)) {
-      section.headLoss = 0;
+  // Уравнения баланса напоров в контурах
+  const cycles = computeCycles();
+  cycles.forEach(cycleRow => {
+    let row = cycleRow.slice();
+    row.push(0);
+    mat.push(row);
+  });
+
+  let logText = "=== Начало решения системы ===\n\n";
+  logText += "Исходная матрица системы:\n" + matrixToString(mat) + "\n";
+
+  // Метод Гаусса
+  const n = mUnknowns;
+  for (let i = 0; i < n; i++) {
+    // Поиск ведущего элемента
+    let pivot = i;
+    for (let j = i; j < n; j++) {
+      if (Math.abs(mat[j][i]) > Math.abs(mat[pivot][i])) {
+        pivot = j;
+      }
+    }
+    
+    if (Math.abs(mat[pivot][i]) < 1e-8) {
+      document.getElementById("solutionSection").innerText = "Матрица вырождена на шаге " + i;
       return;
     }
-
-    const diameterMeters = section.diameter;
-    const length = calculateLength(section);
-    const flowRate = Math.abs(section.flow);
-    const material = section.material;
-
-    section.headLoss = calculateHeadLoss(
-      diameterMeters,
-      length,
-      flowRate,
-      material
-    );
-
-    // Дополнительные параметры для отладки
-    const velocity = calculateVelocity(diameterMeters, flowRate);
-    const reynolds = (velocity * diameterMeters) / 1.31e-6;
-    section.velocity = velocity;
-    section.reynolds = reynolds;
-    section.frictionFactor = calculateFrictionFactor(reynolds, diameterMeters, material);
-  });
-}
-
-// Построение матрицы инцидентности
-function computeIncidenceMatrix() {
-  if (nodes.length === 0 || sections.length === 0) {
-    alert("Сначала добавьте узлы и участки!");
-    return;
-  }
-
-  const nodeIds = nodes.map((node) => node.id).sort((a, b) => a - b);
-  const sectionIds = sections
-    .map((section) => section.id)
-    .sort((a, b) => a - b);
-
-  const matrix = nodeIds.map((nodeId) => {
-    return sectionIds.map((sectionId) => {
-      const section = sections.find((s) => s.id === sectionId);
-      if (section.startNode === nodeId) return -1;
-      if (section.endNode === nodeId) return 1;
-      return 0;
-    });
-  });
-
-  displayMatrix(matrix, nodeIds, sectionIds);
-}
-
-// Отображение матрицы инцидентности
-function displayMatrix(matrix, nodeIds, sectionIds) {
-  const container = document.getElementById("matrixOutput");
-  if (!container) return;
-
-  const table = document.createElement("table");
-  table.border = "1";
-  table.style.borderCollapse = "collapse";
-  table.style.margin = "20px auto";
-
-  const headerRow = document.createElement("tr");
-  headerRow.appendChild(document.createElement("th"));
-  sectionIds.forEach((id) => {
-    const th = document.createElement("th");
-    th.textContent = `Уч. ${id}`;
-    headerRow.appendChild(th);
-  });
-  table.appendChild(headerRow);
-
-  nodeIds.forEach((nodeId, rowIndex) => {
-    const row = document.createElement("tr");
-    const nodeHeader = document.createElement("th");
-    nodeHeader.textContent = `Узел ${nodeId}`;
-    row.appendChild(nodeHeader);
-
-    matrix[rowIndex].forEach((value) => {
-      const cell = document.createElement("td");
-      cell.textContent = value;
-      cell.style.textAlign = "center";
-      cell.style.padding = "5px 10px";
-      row.appendChild(cell);
-    });
-
-    table.appendChild(row);
-  });
-
-  container.innerHTML = "<h3>Матрица инцидентности:</h3>";
-  container.appendChild(table);
-}
-
-// Решение матрицы инцидентности
-function solveIncidenceMatrix() {
-  if (nodes.length === 0 || sections.length === 0) {
-    alert("Сначала добавьте узлы и участки!");
-    return;
-  }
-
-  const A = [];
-  const b = [];
-
-  const nodeIds = nodes.map((node) => node.id).sort((a, b) => a - b);
-  const sectionIds = sections
-    .map((section) => section.id)
-    .sort((a, b) => a - b);
-
-  // Исключаем последний узел (опорный)
-  nodeIds.slice(0, -1).forEach((nodeId) => {
-    const row = [];
-    sectionIds.forEach((sectionId) => {
-      const section = sections.find((s) => s.id === sectionId);
-      if (section.startNode === nodeId) row.push(-1);
-      else if (section.endNode === nodeId) row.push(1);
-      else row.push(0);
-    });
-
-    A.push(row);
-    const node = nodes.find((n) => n.id === nodeId);
-    // Уже работаем с л/с, переводим в м³/с (делим на 1000)
-    b.push(node.flowRate / 1000);
-  });
-
-  const x = gaussSolve(A, b);
-  if (!x) {
-    alert("Система не имеет решений или вырождена.");
-    return;
-  }
-
-  sectionIds.forEach((id, index) => {
-    const section = sections.find((s) => s.id === id);
-    if (section) {
-      section.flow = x[index] * 1000; // Остается в л/с
+    
+    // Перестановка строк
+    if (pivot !== i) {
+      [mat[i], mat[pivot]] = [mat[pivot], mat[i]];
+      logText += `Обмен строк ${i+1} и ${pivot+1}:\n${matrixToString(mat)}\n`;
     }
-  });
-
-  renderSolutionTable(sectionIds, x);
-  drawNetwork();
-}
-
-// Решение системы линейных уравнений методом Гаусса
-function gaussSolve(A, b) {
-  const n = A.length;
-  if (n === 0) return null;
-  const m = A[0].length;
-  const M = A.map((row, i) => [...row, b[i]]);
-
-  for (let i = 0; i < Math.min(n, m); i++) {
-    let maxRow = i;
-    for (let k = i + 1; k < n; k++) {
-      if (Math.abs(M[k][i]) > Math.abs(M[maxRow][i])) {
-        maxRow = k;
-      }
+    
+    // Нормализация строки
+    const pivotVal = mat[i][i];
+    for (let k = i; k < n + 1; k++) {
+      mat[i][k] /= pivotVal;
     }
-    [M[i], M[maxRow]] = [M[maxRow], M[i]];
-
-    if (Math.abs(M[i][i]) < 1e-12) continue;
-
-    const div = M[i][i];
-    for (let j = i; j <= m; j++) {
-      M[i][j] /= div;
-    }
-
-    for (let k = 0; k < n; k++) {
-      if (k === i) continue;
-      const factor = M[k][i];
-      for (let j = i; j <= m; j++) {
-        M[k][j] -= factor * M[i][j];
+    logText += `Нормализация строки ${i+1} (делим на ${pivotVal.toFixed(4)}):\n${matrixToString(mat)}\n`;
+    
+    // Исключение переменной
+    for (let j = 0; j < n; j++) {
+      if (j !== i && Math.abs(mat[j][i]) > 1e-8) {
+        const factor = mat[j][i];
+        for (let k = i; k < n + 1; k++) {
+          mat[j][k] -= factor * mat[i][k];
+        }
+        logText += `Исключение в строке ${j+1} (вычитаем ${factor.toFixed(4)} * строку ${i+1}):\n${matrixToString(mat)}\n`;
       }
     }
   }
 
+  // Первичное решение
+  let solution = new Array(n);
   for (let i = 0; i < n; i++) {
-    let allZero = true;
-    for (let j = 0; j < m; j++) {
-      if (Math.abs(M[i][j]) > 1e-12) {
-        allZero = false;
+    solution[i] = mat[i][n];
+  }
+  
+  logText += "\nПервичное решение (расходы по участкам):\n";
+  solution.forEach((val, index) => {
+    logText += `Участок ${index+1}: ${val.toFixed(4)} л/с\n`;
+  });
+
+  // Корректировка по контурам
+  let correctedSolution = solution.slice();
+  cycles.forEach((cycleRow, cycleIndex) => {
+    let iteration = 0;
+    let h_delta = 0;
+    const indices = [];
+    cycleRow.forEach((coeff, i) => {
+      if (coeff !== 0) indices.push(i);
+    });
+    
+    do {
+      h_delta = 0;
+      indices.forEach(i => {
+        const pipe = pipes[i];
+        const q = correctedSolution[i];
+        const hyd = calculateHydraulics(pipe, q);
+        let headLoss = parseFloat(hyd.headLoss) || 0;
+        h_delta += cycleRow[i] * headLoss;
+      });
+      
+      iteration++;
+      if (Math.abs(h_delta) > 0.5 && iteration < 20) {
+        indices.forEach(i => {
+          const pipe = pipes[i];
+          const q = correctedSolution[i];
+          const hyd = calculateHydraulics(pipe, q);
+          const lam = hyd.lam;
+          const d = hyd.diameterMeters;
+          
+          let q_delta = 0;
+          if (q !== 0 && d !== 0) {
+            q_delta = h_delta / (2 * (((8 * lam) / Math.pow(Math.PI, 2)) * 9.8 * Math.pow(d, 5) * q));
+            const maxChange = 0.05 * q;
+            q_delta = Math.min(Math.max(q_delta, -maxChange), maxChange);
+          }
+          
+          correctedSolution[i] = q - cycleRow[i] * q_delta;
+        });
+      }
+    } while (Math.abs(h_delta) > 0.5 && iteration < 20);
+    
+    logText += `\nКонтур ${cycleIndex+1}: ${iteration} итераций, остаточная невязка = ${h_delta.toFixed(4)} м\n`;
+  });
+
+  logText += "\nИтоговое решение (после корректировки):\n";
+  correctedSolution.forEach((val, index) => {
+    logText += `Участок ${index+1}: ${val.toFixed(4)} л/с\n`;
+  });
+
+  // Отображение результатов
+  displayResults(solution, correctedSolution, logText);
+}
+
+function displayResults(solution, correctedSolution, logText) {
+  const tbody = document.getElementById("solutionTable").querySelector("tbody");
+  tbody.innerHTML = "";
+  
+  pipes.forEach((pipe, i) => {
+    const hyd = calculateHydraulics(pipe, solution[i]);
+    const tr = document.createElement("tr");
+    
+    tr.innerHTML = `
+      <td>${pipe.startNode.id} → ${pipe.endNode.id} (${pipe.pipeName})</td>
+      <td>${solution[i].toFixed(4)}</td>
+      <td>${hyd.velocity}</td>
+      <td>${hyd.headLoss}</td>
+      <td>${hyd.reynolds}</td>
+    `;
+    
+    tbody.appendChild(tr);
+  });
+  
+  // Таблица с корректированными значениями
+  let correctionTable = document.getElementById("correctionResults");
+  if (!correctionTable) {
+    correctionTable = document.createElement("div");
+    correctionTable.id = "correctionResults";
+    document.querySelector(".results-section").appendChild(correctionTable);
+  }
+  
+  correctionTable.innerHTML = `
+    <h3>Результаты после корректировки</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Участок</th>
+          <th>Расход (л/с)</th>
+          <th>Потери напора (м)</th>
+        </tr>
+      </thead>
+      <tbody id="correctedResultsBody"></tbody>
+    </table>
+  `;
+  
+  const correctedTbody = document.getElementById("correctedResultsBody");
+  pipes.forEach((pipe, i) => {
+    const hyd = calculateHydraulics(pipe, correctedSolution[i]);
+    const tr = document.createElement("tr");
+    
+    tr.innerHTML = `
+      <td>${pipe.startNode.id} → ${pipe.endNode.id}</td>
+      <td>${correctedSolution[i].toFixed(4)}</td>
+      <td>${hyd.headLoss}</td>
+    `;
+    
+    correctedTbody.appendChild(tr);
+  });
+  
+  // Подробное решение
+  document.getElementById("detailedSolution").innerHTML = `<pre>${logText}</pre>`;
+}
+
+// -------------------- Вспомогательные функции --------------------
+function computeCycles() {
+  if (nodes.length === 0 || pipes.length === 0) return [];
+  
+  // Построение графа
+  const graph = {};
+  nodes.forEach(n => { graph[n.id] = []; });
+  pipes.forEach((pipe, index) => {
+    graph[pipe.startNode.id].push({ neighbor: pipe.endNode.id, pipeIndex: index });
+    graph[pipe.endNode.id].push({ neighbor: pipe.startNode.id, pipeIndex: index });
+  });
+  
+  // Поиск в глубину для построения остовного дерева
+  const visited = {};
+  const parent = {};
+  const treeEdges = new Set();
+  
+  function dfs(u) {
+    visited[u] = true;
+    graph[u].forEach(item => {
+      if (!visited[item.neighbor]) {
+        parent[item.neighbor] = { parent: u, edge: item.pipeIndex };
+        treeEdges.add(item.pipeIndex);
+        dfs(item.neighbor);
+      }
+    });
+  }
+  
+  // Запуск DFS с первого узла
+  const startNodeId = nodes[0].id;
+  dfs(startNodeId);
+  
+  // Находим хорды (ребра не в остовном дереве)
+  const chords = [];
+  pipes.forEach((pipe, index) => {
+    if (!treeEdges.has(index)) {
+      chords.push(index);
+    }
+  });
+  
+  // Функция для построения пути между двумя узлами в дереве
+  function getTreePath(u, v) {
+    const pathU = [];
+    let current = u;
+    while (current !== undefined) {
+      pathU.push(current);
+      current = parent[current] ? parent[current].parent : undefined;
+    }
+    
+    const pathV = [];
+    current = v;
+    while (current !== undefined) {
+      pathV.push(current);
+      current = parent[current] ? parent[current].parent : undefined;
+    }
+    
+    // Находим общего предка
+    let lca = null;
+    for (let node of pathU) {
+      if (pathV.includes(node)) {
+        lca = node;
         break;
       }
     }
-    if (allZero && Math.abs(M[i][m]) > 1e-12) {
-      return null;
+    
+    // Строим путь от u до lca
+    const pathFromU = [];
+    for (let node of pathU) {
+      pathFromU.push(node);
+      if (node === lca) break;
     }
-  }
-
-  const x = new Array(m).fill(0);
-  for (let i = 0; i < Math.min(n, m); i++) {
-    x[i] = M[i][m];
-  }
-
-  return x;
-}
-
-// Отображение решения матрицы
-function renderSolutionTable(sectionIds, x) {
-  const container = document.getElementById("solutionTableContainer");
-  if (!container) return;
-
-  const table = document.createElement("table");
-  table.border = "1";
-  table.style.borderCollapse = "collapse";
-  table.style.margin = "20px auto";
-
-  table.innerHTML = `
-    <thead>
-      <tr>
-        <th>Участок</th>
-        <th>Расход (л/с)</th>
-        <th>Расход (м³/ч)</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${sectionIds
-        .map(
-          (id, i) => `
-          <tr>
-            <td>${id}</td>
-            <td>${
-              isNaN(x[i])
-                ? '<span class="na-value">N/A</span>'
-                : (x[i] * 1000).toFixed(2)
-            }</td>
-            <td>${
-              isNaN(x[i])
-                ? '<span class="na-value">N/A</span>'
-                : (x[i] * 3600).toFixed(2)
-            }</td>
-          </tr>
-        `
-        )
-        .join("")}
-    </tbody>
-  `;
-
-  container.innerHTML = "<h3>Результаты решения (метод Гаусса):</h3>";
-  container.appendChild(table);
-}
-
-// Построение списка смежности
-function buildAdjacencyList() {
-  const adjacency = new Map();
-  nodes.forEach((node) => adjacency.set(node.id, []));
-
-  sections.forEach((section) => {
-    adjacency.get(section.startNode).push(section.endNode);
-    adjacency.get(section.endNode).push(section.startNode);
-  });
-
-  return adjacency;
-}
-
-// Поиск циклов в графе
-function findCycles(adjacency) {
-  const cycles = [];
-  const visited = new Set();
-
-  function dfs(current, parent, path) {
-    visited.add(current);
-    path.push(current);
-
-    for (const neighbor of adjacency.get(current)) {
-      if (!visited.has(neighbor)) {
-        dfs(neighbor, current, path);
-      } else if (neighbor !== parent && path.includes(neighbor)) {
-        const cycleStartIndex = path.indexOf(neighbor);
-        const cycle = path.slice(cycleStartIndex);
-        const sortedCycle = [...new Set(cycle)].sort((a, b) => a - b).join("-");
-        if (!cycles.some((c) => c.join("-") === sortedCycle)) {
-          cycles.push(cycle);
-        }
-      }
+    
+    // Строим путь от v до lca (в обратном порядке)
+    const pathFromV = [];
+    for (let node of pathV) {
+      if (node === lca) break;
+      pathFromV.push(node);
     }
-
-    path.pop();
+    pathFromV.reverse();
+    
+    return pathFromU.concat(pathFromV);
   }
-
-  for (const node of adjacency.keys()) {
-    if (!visited.has(node)) {
-      dfs(node, null, []);
-    }
-  }
-
-  return cycles;
-}
-
-// Поиск циклов с направлениями участков
-function findCyclesWithDirections() {
-  const adjacency = buildAdjacencyList();
-  const cycles = findCycles(adjacency);
-  const cyclesWithDirections = [];
-
-  cycles.forEach((cycle) => {
-    const directedCycle = [];
-    for (let i = 0; i < cycle.length; i++) {
-      const node1 = cycle[i];
-      const node2 = cycle[(i + 1) % cycle.length];
-      const section = sections.find(
-        (sec) =>
-          (sec.startNode === node1 && sec.endNode === node2) ||
-          (sec.startNode === node2 && sec.endNode === node1)
+  
+  // Построение уравнений для каждого контура
+  const cyclesArr = [];
+  chords.forEach(chordIndex => {
+    const chord = pipes[chordIndex];
+    const u = chord.startNode.id;
+    const v = chord.endNode.id;
+    
+    // Получаем путь по дереву между концами хорды
+    const treePath = getTreePath(u, v);
+    
+    // Добавляем хорду для замыкания цикла
+    const fullCycleNodes = treePath.slice();
+    fullCycleNodes.push(u);
+    
+    // Создаем уравнение контура
+    const cycleRow = new Array(pipes.length).fill(0);
+    
+    for (let i = 0; i < fullCycleNodes.length - 1; i++) {
+      const a = fullCycleNodes[i];
+      const b = fullCycleNodes[i + 1];
+      
+      // Находим трубу между a и b
+      const pipeIdx = pipes.findIndex(p =>
+        (p.startNode.id == a && p.endNode.id == b) ||
+        (p.startNode.id == b && p.endNode.id == a)
       );
-
-      if (section) {
-        const direction = section.startNode === node1 ? 1 : -1;
-        directedCycle.push({
-          sectionId: section.id,
-          direction: direction,
-          section: section,
-        });
+      
+      if (pipeIdx !== -1) {
+        // Определяем направление (+1 или -1)
+        const sign = (pipes[pipeIdx].startNode.id == a && pipes[pipeIdx].endNode.id == b) ? 1 : -1;
+        cycleRow[pipeIdx] = sign;
       }
     }
-    cyclesWithDirections.push(directedCycle);
-  });
-
-  return cyclesWithDirections;
-}
-
-// Расчет невязок по кольцам
-function calculateHeadLossDiscrepancy(cyclesWithDirections) {
-  const discrepancies = [];
-
-  cyclesWithDirections.forEach((cycle) => {
-    let sumHeadLoss = 0;
-    let hasValidSections = false;
-
-    cycle.forEach((link) => {
-      const section = sections.find((s) => s.id === link.sectionId);
-      if (!section || section.headLoss === undefined || isNaN(section.headLoss)) {
-        console.warn(
-          `Не найдены данные о потерях напора для участка ${link.sectionId}`
-        );
-        return;
-      }
-
-      sumHeadLoss += section.headLoss * link.direction;
-      hasValidSections = true;
-    });
-
-    if (hasValidSections) {
-      discrepancies.push(sumHeadLoss);
-    } else {
-      console.warn("Кольцо не содержит участков с валидными данными");
-      discrepancies.push(NaN);
-    }
-  });
-
-  return discrepancies;
-}
-
-// Коррекция расходов для балансировки
-function correctFlows(cyclesWithDirections, discrepancies) {
-  let correctionsApplied = false;
-
-  cyclesWithDirections.forEach((cycle, cycleIndex) => {
-    const discrepancy = discrepancies[cycleIndex];
-    if (isNaN(discrepancy) || Math.abs(discrepancy) <= MAX_ALLOWED_DISCREPANCY)
-      return;
-
-    let sumHQ = 0;
-    cycle.forEach((link) => {
-      const section = sections.find((s) => s.id === link.sectionId);
-      if (!section || isNaN(section.flow) || isNaN(section.headLoss)) return;
-
-      const q = Math.abs(section.flow);
-      sumHQ += section.headLoss / q;
-    });
-
-    if (sumHQ === 0) return;
-
-    const deltaQ = -discrepancy / (2 * sumHQ);
-
-    cycle.forEach((link) => {
-      const section = sections.find((s) => s.id === link.sectionId);
-      if (!section || isNaN(section.flow)) return;
-
-      section.flow += deltaQ * link.direction;
-      correctionsApplied = true;
-    });
-  });
-
-  return correctionsApplied;
-}
-
-// Выполнение гидравлического расчета
-function performHydraulicCalculation() {
-  // 1. Решение методом Гаусса
-  solveIncidenceMatrix();
-  
-  // 2. Расчет начальных потерь напора
-  calculateAllHeadLosses();
-  
-  // 3. Нахождение контуров
-  const cyclesWithDirections = findCyclesWithDirections();
-  
-  // 4. Расчет невязок
-  const discrepancies = calculateHeadLossDiscrepancy(cyclesWithDirections);
-  
-  // 5. Коррекция расходов
-  let iteration = 0;
-  let maxDiscrepancy = Math.max(...discrepancies.map(Math.abs));
-  
-  while (maxDiscrepancy > MAX_ALLOWED_DISCREPANCY && iteration < MAX_ITERATIONS) {
-    const correctionsApplied = correctFlows(cyclesWithDirections, discrepancies);
-    if (!correctionsApplied) break;
     
-    calculateAllHeadLosses();
-    const newDiscrepancies = calculateHeadLossDiscrepancy(cyclesWithDirections);
-    maxDiscrepancy = Math.max(...newDiscrepancies.map(Math.abs));
-    iteration++;
+    cyclesArr.push(cycleRow);
+  });
+  
+  return cyclesArr;
+}
+
+function matrixToString(mat) {
+  return mat.map(row => 
+    row.map(val => 
+      typeof val === 'number' ? val.toFixed(4).padStart(8) : val.padStart(8)
+    ).join(' ')
+  ).join('\n');
+}
+
+function toggleDetailedSolution() {
+  const detailedDiv = document.getElementById("detailedSolution");
+  const toggleBtn = document.getElementById("toggleDetailedSolutionBtn");
+  
+  if (detailedDiv.style.display === "none" || detailedDiv.style.display === "") {
+    detailedDiv.style.display = "block";
+    toggleBtn.textContent = "Скрыть подробное решение";
+  } else {
+    detailedDiv.style.display = "none";
+    toggleBtn.textContent = "Показать подробное решение";
   }
-  
-  // 6. Отображение результатов
-  renderFinalResults(cyclesWithDirections, discrepancies, iteration);
 }
-
-// Отображение финальных результатов
-function renderFinalResults(cyclesWithDirections, discrepancies, iterations) {
-  const container = document.getElementById("finalResults");
-  container.innerHTML = `
-    <h2 class="result-title">Результаты гидравлического расчета</h2>
-    <div class="result-section">
-      <h3>Невязки напора по кольцам</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>Кольцо</th>
-            <th>Состав кольца</th>
-            <th>Невязка (м)</th>
-            <th>Допустимая невязка</th>
-            <th>Статус</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${cyclesWithDirections
-            .map((cycle, i) => {
-              const discrepancy = isNaN(discrepancies[i]) ? 0 : discrepancies[i];
-              const isOk = Math.abs(discrepancy) <= MAX_ALLOWED_DISCREPANCY;
-
-              const cycleDesc = cycle
-                .map((link) => {
-                  const section = sections.find((s) => s.id === link.sectionId);
-                  const directionSymbol = link.direction > 0 ? "→" : "←";
-                  return `${section.id}${directionSymbol}`;
-                })
-                .join(" ");
-
-              return `
-                <tr>
-                  <td>${i + 1}</td>
-                  <td>${cycleDesc}</td>
-                  <td>${discrepancy.toFixed(4)}</td>
-                  <td>${MAX_ALLOWED_DISCREPANCY.toFixed(2)}</td>
-                  <td class="${isOk ? "ok-status" : "error-status"}">
-                    ${isOk ? "✓ OK" : "✗ Превышена"}
-                  </td>
-                </tr>
-              `;
-            })
-            .join("")}
-        </tbody>
-      </table>
-    </div>
-    
-    <div class="result-section">
-      <h3>Параметры участков</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>Участок</th>
-            <th>Расход (л/с)</th>
-            <th>Потери напора (м)</th>
-            <th>Скорость (м/с)</th>
-            <th>Направление</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${sections
-            .map((section) => {
-              const direction = section.flow >= 0 ? "→" : "←";
-              return `
-                <tr>
-                  <td>${section.id}</td>
-                  <td>${section.flow.toFixed(2)}</td>
-                  <td>${
-                    isNaN(section.headLoss)
-                      ? '<span class="na-value">N/A</span>'
-                      : section.headLoss.toFixed(3)
-                  }</td>
-                  <td>${
-                    isNaN(section.velocity)
-                      ? '<span class="na-value">N/A</span>'
-                      : section.velocity.toFixed(3)
-                  }</td>
-                  <td>${direction}</td>
-                </tr>
-              `;
-            })
-            .join("")}
-        </tbody>
-      </table>
-    </div>
-    
-    <div class="iteration-info">
-      <p>Количество итераций: ${iterations}</p>
-      <p>Максимальная невязка: ${Math.max(...discrepancies.map(Math.abs)).toFixed(4)} м</p>
-    </div>
-  `;
-}
-
-// Инициализация при загрузке страницы
-window.onload = () => {
-  loadDiameters();
-  drawNetwork();
-};
