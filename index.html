@@ -243,7 +243,10 @@
     }
 
     // -------------------- Глобальные переменные --------------------
-    const pipeTypes = []; // Будет заполнено из pipes.json
+    const pipeTypes = {
+        plastic: [],
+        steel: []
+    }; // Будет заполнено из pipes.json
     let nodes = [];
     let pipes = [];
     let systemMatrix = []; // Матрица системы уравнений
@@ -253,10 +256,9 @@
     document.addEventListener("DOMContentLoaded", () => {
       loadPipesJSON();
 
-      // Переключение отображения секции выбора диаметра
+      // Обновляем список труб при изменении материала
       document.getElementById("material").addEventListener("change", function() {
-        document.getElementById("diameterSection").style.display = 
-          this.value === "plastic" ? "block" : "none";
+        updateDiameterSelect();
       });
 
       document.getElementById("addNodeBtn").addEventListener("click", addNode);
@@ -277,9 +279,19 @@
         })
         .then(data => {
           // Преобразуем данные в нужный формат
-          pipeTypes.length = 0;
+          pipeTypes.plastic.length = 0;
+          pipeTypes.steel.length = 0;
+          
+          // Здесь можно добавить разные типы труб для разных материалов
           data.forEach(pipe => {
-            pipeTypes.push({
+            // Добавляем все трубы и в пластик, и в сталь (для примера)
+            // В реальном приложении нужно разделить по материалам
+            pipeTypes.plastic.push({
+              name: pipe["Обозначение в проекте "],
+              diameter: pipe["Dвн - внутренний диаметр, расчетный м"] * 1000 // Переводим в мм
+            });
+            
+            pipeTypes.steel.push({
               name: pipe["Обозначение в проекте "],
               diameter: pipe["Dвн - внутренний диаметр, расчетный м"] * 1000 // Переводим в мм
             });
@@ -296,16 +308,19 @@
     }
 
     function updateDiameterSelect() {
+      const material = document.getElementById("material").value;
       const diameterSelect = document.getElementById("diameter");
       diameterSelect.innerHTML = '';
       diameterSelect.disabled = false;
       
-      if (pipeTypes.length === 0) {
+      const currentPipeTypes = pipeTypes[material] || [];
+      
+      if (currentPipeTypes.length === 0) {
         diameterSelect.innerHTML = '<option value="">Нет данных о трубах</option>';
         return;
       }
       
-      pipeTypes.forEach(pipe => {
+      currentPipeTypes.forEach(pipe => {
         const option = new Option(
           `${pipe.name} (${pipe.diameter.toFixed(1)} мм)`, 
           pipe.name
@@ -377,18 +392,18 @@
 
     // -------------------- Добавление соединений --------------------
     function addConnection() {
-      const material = document.getElementById("material").value;
-      if (material === "steel") {
-        alert("Данные для стальных труб временно недоступны");
-        return;
-      }
-      
       const startId = document.getElementById("startNode").value;
       const endId = document.getElementById("endNode").value;
+      const material = document.getElementById("material").value;
       const pipeName = document.getElementById("diameter").value;
 
       if (!startId || !endId || startId === endId) {
         alert("Выберите два различных узла для соединения");
+        return;
+      }
+
+      if (!pipeName) {
+        alert("Выберите тип трубы");
         return;
       }
 
@@ -416,7 +431,7 @@
       const connectionList = document.getElementById("connectionList");
       if (connectionList) {
         const li = document.createElement("li");
-        li.textContent = `Соединение: ${startId} → ${endId} | Длина: ${pipe.length} м | Труба: ${pipe.pipeName}`;
+        li.textContent = `Соединение: ${startId} → ${endId} | Длина: ${pipe.length} м | Материал: ${material} | Труба: ${pipe.pipeName}`;
         connectionList.appendChild(li);
       }
 
@@ -509,7 +524,7 @@
     // -------------------- Гидравлический расчет --------------------
     function calculateHydraulics(pipe, flowRate) {
       const material = document.getElementById("material").value;
-      const pipeType = pipeTypes.find(pt => pt.name === pipe.pipeName);
+      const pipeType = pipeTypes[material].find(pt => pt.name === pipe.pipeName);
       
       if (!pipeType) {
         console.error("Не найдены данные для трубы:", pipe.pipeName);
@@ -586,294 +601,292 @@
     }
 
     // -------------------- Решение системы уравнений --------------------
-    <!-- Вставьте этот скрипт в раздел <script> вашего HTML файла -->
-
-// -------------------- Решение системы уравнений --------------------
-function solveSystem() {
-  const statusElement = document.getElementById("calculationStatus");
-  statusElement.textContent = "Выполняется расчет...";
-  statusElement.className = "error";
-  
-  // Скрываем предыдущие результаты
-  document.getElementById("matrixSection").style.display = "none";
-  document.getElementById("resultsSection").style.display = "none";
-  document.getElementById("detailedSolution").innerHTML = "";
-  
-  if (nodes.length < 2 || pipes.length === 0) {
-    statusElement.textContent = "Добавьте минимум 2 узла и 1 соединение для расчёта.";
-    return;
-  }
-
-  const mUnknowns = pipes.length;
-  systemMatrix = [];
-  let logText = "=== НАЧАЛО РАСЧЕТА ===\n\n";
-  
-  // Уравнения баланса расходов в узлах
-  for (let i = 1; i < nodes.length; i++) {
-    let row = new Array(mUnknowns + 1).fill(0);
-    
-    pipes.forEach((pipe, j) => {
-      if (pipe.startNode.id === nodes[i].id) {
-        row[j] = -1;
-      } else if (pipe.endNode.id === nodes[i].id) {
-        row[j] = 1;
+    function solveSystem() {
+      const statusElement = document.getElementById("calculationStatus");
+      statusElement.textContent = "Выполняется расчет...";
+      statusElement.className = "error";
+      
+      // Скрываем предыдущие результаты
+      document.getElementById("matrixSection").style.display = "none";
+      document.getElementById("resultsSection").style.display = "none";
+      document.getElementById("detailedSolution").innerHTML = "";
+      
+      if (nodes.length < 2 || pipes.length === 0) {
+        statusElement.textContent = "Добавьте минимум 2 узла и 1 соединение для расчёта.";
+        return;
       }
-    });
-    
-    row[mUnknowns] = Math.abs(parseFloat(nodes[i].flow));
-    systemMatrix.push(row);
-  }
 
-  // Уравнения баланса напоров в контурах
-  const cycles = computeCycles();
-  cycles.forEach(cycleRow => {
-    let row = cycleRow.slice();
-    row.push(0);
-    systemMatrix.push(row);
-  });
-
-  // Логируем исходную матрицу
-  logText += "ИСХОДНАЯ МАТРИЦА СИСТЕМЫ:\n";
-  logText += matrixToString(systemMatrix) + "\n\n";
-
-  // Метод Гаусса
-  const n = mUnknowns;
-  for (let i = 0; i < n; i++) {
-    logText += `=== ШАГ ${i+1} ===\n`;
-    
-    // Поиск ведущего элемента
-    let pivot = i;
-    for (let j = i; j < n; j++) {
-      if (Math.abs(systemMatrix[j][i]) > Math.abs(systemMatrix[pivot][i])) {
-        pivot = j;
-      }
-    }
-    
-    logText += `Ведущий элемент в столбце ${i+1}: ${systemMatrix[pivot][i].toFixed(4)} (строка ${pivot+1})\n`;
-    
-    if (Math.abs(systemMatrix[pivot][i]) < 1e-8) {
-      logText += "ОШИБКА: Матрица вырождена (нулевой ведущий элемент)\n";
-      statusElement.textContent = "Матрица вырождена на шаге " + i;
-      document.getElementById("detailedSolution").innerHTML = `<pre>${logText}</pre>`;
-      return;
-    }
-    
-    // Перестановка строк
-    if (pivot !== i) {
-      [systemMatrix[i], systemMatrix[pivot]] = [systemMatrix[pivot], systemMatrix[i]];
-      logText += `Перестановка строк ${i+1} и ${pivot+1}:\n${matrixToString(systemMatrix)}\n`;
-    }
-    
-    // Нормализация строки
-    const pivotVal = systemMatrix[i][i];
-    for (let k = i; k < n + 1; k++) {
-      systemMatrix[i][k] /= pivotVal;
-    }
-    logText += `Нормализация строки ${i+1} (делим на ${pivotVal.toFixed(4)}):\n${matrixToString(systemMatrix)}\n`;
-    
-    // Исключение переменной
-    for (let j = 0; j < n; j++) {
-      if (j !== i && Math.abs(systemMatrix[j][i]) > 1e-8) {
-        const factor = systemMatrix[j][i];
-        for (let k = i; k < n + 1; k++) {
-          systemMatrix[j][k] -= factor * systemMatrix[i][k];
-        }
-        logText += `Исключение в строке ${j+1} (вычитаем ${factor.toFixed(4)} * строку ${i+1}):\n${matrixToString(systemMatrix)}\n`;
-      }
-    }
-    
-    logText += "\n";
-  }
-
-  // Первичное решение
-  solution = new Array(n);
-  for (let i = 0; i < n; i++) {
-    solution[i] = systemMatrix[i][n];
-  }
-  
-  logText += "ПЕРВИЧНОЕ РЕШЕНИЕ (до корректировки):\n";
-  solution.forEach((val, i) => {
-    logText += `Q${i+1} = ${val.toFixed(4)} л/с\n`;
-  });
-  logText += "\n";
-
-  // Корректировка по контурам
-  let hasErrors = false;
-  let errorMessages = [];
-  
-  cycles.forEach((cycleRow, cycleIndex) => {
-    logText += `=== КОРРЕКТИРОВКА КОНТУРА ${cycleIndex+1} ===\n`;
-    
-    let iteration = 0;
-    let h_delta = 0;
-    const indices = [];
-    cycleRow.forEach((coeff, i) => {
-      if (coeff !== 0) indices.push(i);
-    });
-    
-    do {
-      h_delta = 0;
-      indices.forEach(i => {
-        const pipe = pipes[i];
-        const q = solution[i];
-        const hyd = calculateHydraulics(pipe, q);
+      const mUnknowns = pipes.length;
+      systemMatrix = [];
+      let logText = "=== НАЧАЛО РАСЧЕТА ===\n\n";
+      
+      // Уравнения баланса расходов в узлах
+      for (let i = 1; i < nodes.length; i++) {
+        let row = new Array(mUnknowns + 1).fill(0);
         
-        if (hyd.error) {
-          errorMessages.push(`Ошибка в трубе ${pipe.startNode.id}-${pipe.endNode.id}: ${hyd.error}`);
-          hasErrors = true;
+        pipes.forEach((pipe, j) => {
+          if (pipe.startNode.id === nodes[i].id) {
+            row[j] = -1;
+          } else if (pipe.endNode.id === nodes[i].id) {
+            row[j] = 1;
+          }
+        });
+        
+        row[mUnknowns] = Math.abs(parseFloat(nodes[i].flow));
+        systemMatrix.push(row);
+      }
+
+      // Уравнения баланса напоров в контурах
+      const cycles = computeCycles();
+      cycles.forEach(cycleRow => {
+        let row = cycleRow.slice();
+        row.push(0);
+        systemMatrix.push(row);
+      });
+
+      // Логируем исходную матрицу
+      logText += "ИСХОДНАЯ МАТРИЦА СИСТЕМЫ:\n";
+      logText += matrixToString(systemMatrix) + "\n\n";
+
+      // Метод Гаусса
+      const n = mUnknowns;
+      for (let i = 0; i < n; i++) {
+        logText += `=== ШАГ ${i+1} ===\n`;
+        
+        // Поиск ведущего элемента
+        let pivot = i;
+        for (let j = i; j < n; j++) {
+          if (Math.abs(systemMatrix[j][i]) > Math.abs(systemMatrix[pivot][i])) {
+            pivot = j;
+          }
+        }
+        
+        logText += `Ведущий элемент в столбце ${i+1}: ${systemMatrix[pivot][i].toFixed(4)} (строка ${pivot+1})\n`;
+        
+        if (Math.abs(systemMatrix[pivot][i]) < 1e-8) {
+          logText += "ОШИБКА: Матрица вырождена (нулевой ведущий элемент)\n";
+          statusElement.textContent = "Матрица вырождена на шаге " + i;
+          document.getElementById("detailedSolution").innerHTML = `<pre>${logText}</pre>`;
           return;
         }
         
-        let headLoss = parseFloat(hyd.headLoss) || 0;
-        h_delta += cycleRow[i] * headLoss;
+        // Перестановка строк
+        if (pivot !== i) {
+          [systemMatrix[i], systemMatrix[pivot]] = [systemMatrix[pivot], systemMatrix[i]];
+          logText += `Перестановка строк ${i+1} и ${pivot+1}:\n${matrixToString(systemMatrix)}\n`;
+        }
+        
+        // Нормализация строки
+        const pivotVal = systemMatrix[i][i];
+        for (let k = i; k < n + 1; k++) {
+          systemMatrix[i][k] /= pivotVal;
+        }
+        logText += `Нормализация строки ${i+1} (делим на ${pivotVal.toFixed(4)}):\n${matrixToString(systemMatrix)}\n`;
+        
+        // Исключение переменной
+        for (let j = 0; j < n; j++) {
+          if (j !== i && Math.abs(systemMatrix[j][i]) > 1e-8) {
+            const factor = systemMatrix[j][i];
+            for (let k = i; k < n + 1; k++) {
+              systemMatrix[j][k] -= factor * systemMatrix[i][k];
+            }
+            logText += `Исключение в строке ${j+1} (вычитаем ${factor.toFixed(4)} * строку ${i+1}):\n${matrixToString(systemMatrix)}\n`;
+          }
+        }
+        
+        logText += "\n";
+      }
+
+      // Первичное решение
+      solution = new Array(n);
+      for (let i = 0; i < n; i++) {
+        solution[i] = systemMatrix[i][n];
+      }
+      
+      logText += "ПЕРВИЧНОЕ РЕШЕНИЕ (до корректировки):\n";
+      solution.forEach((val, i) => {
+        logText += `Q${i+1} = ${val.toFixed(4)} л/с\n`;
+      });
+      logText += "\n";
+
+      // Корректировка по контурам
+      let hasErrors = false;
+      let errorMessages = [];
+      
+      cycles.forEach((cycleRow, cycleIndex) => {
+        logText += `=== КОРРЕКТИРОВКА КОНТУРА ${cycleIndex+1} ===\n`;
+        
+        let iteration = 0;
+        let h_delta = 0;
+        const indices = [];
+        cycleRow.forEach((coeff, i) => {
+          if (coeff !== 0) indices.push(i);
+        });
+        
+        do {
+          h_delta = 0;
+          indices.forEach(i => {
+            const pipe = pipes[i];
+            const q = solution[i];
+            const hyd = calculateHydraulics(pipe, q);
+            
+            if (hyd.error) {
+              errorMessages.push(`Ошибка в трубе ${pipe.startNode.id}-${pipe.endNode.id}: ${hyd.error}`);
+              hasErrors = true;
+              return;
+            }
+            
+            let headLoss = parseFloat(hyd.headLoss) || 0;
+            h_delta += cycleRow[i] * headLoss;
+          });
+          
+          if (hasErrors) return;
+          
+          iteration++;
+          logText += `Итерация ${iteration}: Невязка = ${h_delta.toFixed(4)} м\n`;
+          
+          if (Math.abs(h_delta) > 0.5 && iteration < 20) {
+            indices.forEach(i => {
+              const pipe = pipes[i];
+              const q = solution[i];
+              const hyd = calculateHydraulics(pipe, q);
+              
+              if (hyd.error) {
+                errorMessages.push(`Ошибка в трубе ${pipe.startNode.id}-${pipe.endNode.id}: ${hyd.error}`);
+                hasErrors = true;
+                return;
+              }
+              
+              const lam = parseFloat(hyd.lam);
+              const d = hyd.diameterMeters;
+              
+              let q_delta = 0;
+              if (q !== 0 && d !== 0 && !isNaN(lam)) {
+                q_delta = h_delta / (2 * (((8 * lam) / Math.pow(Math.PI, 2)) * 9.81 * Math.pow(d, 5) * q));
+                const maxChange = 0.05 * q;
+                q_delta = Math.min(Math.max(q_delta, -maxChange), maxChange);
+                logText += `Корректировка Q${i+1}: ${q.toFixed(4)} -> ${(q - cycleRow[i] * q_delta).toFixed(4)} (Δ = ${(cycleRow[i] * q_delta).toFixed(6)})\n`;
+              }
+              
+              solution[i] = q - cycleRow[i] * q_delta;
+            });
+          }
+        } while (Math.abs(h_delta) > 0.5 && iteration < 20 && !hasErrors);
+        
+        logText += `Контур ${cycleIndex+1}: Итераций = ${iteration}, Конечная невязка = ${h_delta.toFixed(4)} м\n\n`;
+      });
+
+      if (hasErrors) {
+        logText += "ОШИБКИ В РАСЧЕТАХ:\n" + errorMessages.join("\n") + "\n";
+        statusElement.textContent = "Ошибки в расчетах: " + errorMessages.join("; ");
+        document.getElementById("detailedSolution").innerHTML = `<pre>${logText}</pre>`;
+        return;
+      }
+
+      logText += "ИТОГОВОЕ РЕШЕНИЕ (после корректировки):\n";
+      solution.forEach((val, i) => {
+        logText += `Q${i+1} = ${val.toFixed(4)} л/с\n`;
       });
       
-      if (hasErrors) return;
+      statusElement.textContent = "Расчет успешно завершен";
+      statusElement.className = "success";
       
-      iteration++;
-      logText += `Итерация ${iteration}: Невязка = ${h_delta.toFixed(4)} м\n`;
+      // Отображаем матрицу и результаты
+      displaySystemMatrix();
+      displayResults();
       
-      if (Math.abs(h_delta) > 0.5 && iteration < 20) {
-        indices.forEach(i => {
-          const pipe = pipes[i];
-          const q = solution[i];
-          const hyd = calculateHydraulics(pipe, q);
+      // Показываем подробное решение
+      document.getElementById("detailedSolution").innerHTML = `<pre>${logText}</pre>`;
+    }
+
+    // -------------------- Отображение матрицы системы --------------------
+    function displaySystemMatrix() {
+      const matrixTable = document.getElementById("matrixTable");
+      const thead = matrixTable.querySelector("thead");
+      const tbody = matrixTable.querySelector("tbody");
+      
+      // Очищаем таблицу
+      thead.innerHTML = "";
+      tbody.innerHTML = "";
+      
+      // Создаем заголовок
+      const headerRow = document.createElement("tr");
+      headerRow.innerHTML = "<th>#</th>";
+      
+      // Добавляем колонки для переменных (труб)
+      for (let i = 0; i < pipes.length; i++) {
+        const th = document.createElement("th");
+        th.textContent = `Q${i+1}`;
+        headerRow.appendChild(th);
+      }
+      
+      // Колонка для правой части
+      const rhsTh = document.createElement("th");
+      rhsTh.textContent = "RHS";
+      headerRow.appendChild(rhsTh);
+      
+      thead.appendChild(headerRow);
+      
+      // Добавляем строки матрицы
+      systemMatrix.forEach((row, i) => {
+        const tr = document.createElement("tr");
+        const th = document.createElement("th");
+        th.textContent = i+1;
+        tr.appendChild(th);
+        
+        row.forEach((val, j) => {
+          const td = document.createElement("td");
+          td.textContent = val.toFixed(4);
           
-          if (hyd.error) {
-            errorMessages.push(`Ошибка в трубе ${pipe.startNode.id}-${pipe.endNode.id}: ${hyd.error}`);
-            hasErrors = true;
-            return;
+          // Выделяем диагональные элементы
+          if (j < pipes.length && i === j) {
+            td.style.fontWeight = "bold";
+            td.style.backgroundColor = "#e6f7ff";
           }
           
-          const lam = parseFloat(hyd.lam);
-          const d = hyd.diameterMeters;
-          
-          let q_delta = 0;
-          if (q !== 0 && d !== 0 && !isNaN(lam)) {
-            q_delta = h_delta / (2 * (((8 * lam) / Math.pow(Math.PI, 2)) * 9.81 * Math.pow(d, 5) * q));
-            const maxChange = 0.05 * q;
-            q_delta = Math.min(Math.max(q_delta, -maxChange), maxChange);
-            logText += `Корректировка Q${i+1}: ${q.toFixed(4)} -> ${(q - cycleRow[i] * q_delta).toFixed(4)} (Δ = ${(cycleRow[i] * q_delta).toFixed(6)})\n`;
+          // Выделяем правую часть
+          if (j === pipes.length) {
+            td.style.fontWeight = "bold";
           }
           
-          solution[i] = q - cycleRow[i] * q_delta;
+          tr.appendChild(td);
         });
-      }
-    } while (Math.abs(h_delta) > 0.5 && iteration < 20 && !hasErrors);
-    
-    logText += `Контур ${cycleIndex+1}: Итераций = ${iteration}, Конечная невязка = ${h_delta.toFixed(4)} м\n\n`;
-  });
-
-  if (hasErrors) {
-    logText += "ОШИБКИ В РАСЧЕТАХ:\n" + errorMessages.join("\n") + "\n";
-    statusElement.textContent = "Ошибки в расчетах: " + errorMessages.join("; ");
-    document.getElementById("detailedSolution").innerHTML = `<pre>${logText}</pre>`;
-    return;
-  }
-
-  logText += "ИТОГОВОЕ РЕШЕНИЕ (после корректировки):\n";
-  solution.forEach((val, i) => {
-    logText += `Q${i+1} = ${val.toFixed(4)} л/с\n`;
-  });
-  
-  statusElement.textContent = "Расчет успешно завершен";
-  statusElement.className = "success";
-  
-  // Отображаем матрицу и результаты
-  displaySystemMatrix();
-  displayResults();
-  
-  // Показываем подробное решение
-  document.getElementById("detailedSolution").innerHTML = `<pre>${logText}</pre>`;
-}
-
-// -------------------- Отображение матрицы системы --------------------
-function displaySystemMatrix() {
-  const matrixTable = document.getElementById("matrixTable");
-  const thead = matrixTable.querySelector("thead");
-  const tbody = matrixTable.querySelector("tbody");
-  
-  // Очищаем таблицу
-  thead.innerHTML = "";
-  tbody.innerHTML = "";
-  
-  // Создаем заголовок
-  const headerRow = document.createElement("tr");
-  headerRow.innerHTML = "<th>#</th>";
-  
-  // Добавляем колонки для переменных (труб)
-  for (let i = 0; i < pipes.length; i++) {
-    const th = document.createElement("th");
-    th.textContent = `Q${i+1}`;
-    headerRow.appendChild(th);
-  }
-  
-  // Колонка для правой части
-  const rhsTh = document.createElement("th");
-  rhsTh.textContent = "RHS";
-  headerRow.appendChild(rhsTh);
-  
-  thead.appendChild(headerRow);
-  
-  // Добавляем строки матрицы
-  systemMatrix.forEach((row, i) => {
-    const tr = document.createElement("tr");
-    const th = document.createElement("th");
-    th.textContent = i+1;
-    tr.appendChild(th);
-    
-    row.forEach((val, j) => {
-      const td = document.createElement("td");
-      td.textContent = val.toFixed(4);
+        
+        tbody.appendChild(tr);
+      });
       
-      // Выделяем диагональные элементы
-      if (j < pipes.length && i === j) {
-        td.style.fontWeight = "bold";
-        td.style.backgroundColor = "#e6f7ff";
-      }
-      
-      // Выделяем правую часть
-      if (j === pipes.length) {
-        td.style.fontWeight = "bold";
-      }
-      
-      tr.appendChild(td);
-    });
-    
-    tbody.appendChild(tr);
-  });
-  
-  // Показываем секцию с матрицей
-  document.getElementById("matrixSection").style.display = "block";
-}
+      // Показываем секцию с матрицей
+      document.getElementById("matrixSection").style.display = "block";
+    }
 
-// -------------------- Вспомогательные функции --------------------
-function matrixToString(mat) {
-  let str = "";
-  const cols = mat[0] ? mat[0].length : 0;
-  
-  // Заголовок
-  str += "       ";
-  for (let j = 0; j < cols-1; j++) {
-    str += ` Q${j+1}      `.padStart(10);
-  }
-  str += ` RHS     \n`;
-  
-  // Строки матрицы
-  mat.forEach((row, i) => {
-    str += `Ур.${i+1}: `.padStart(6);
-    row.forEach((val, j) => {
-      if (j < cols-1) {
-        str += val.toFixed(4).padStart(8) + " ";
-      } else {
-        str += "| " + val.toFixed(4).padStart(8);
+    // -------------------- Вспомогательные функции --------------------
+    function matrixToString(mat) {
+      let str = "";
+      const cols = mat[0] ? mat[0].length : 0;
+      
+      // Заголовок
+      str += "       ";
+      for (let j = 0; j < cols-1; j++) {
+        str += ` Q${j+1}      `.padStart(10);
       }
-    });
-    str += "\n";
-  });
-  
-  return str;
-}
+      str += ` RHS     \n`;
+      
+      // Строки матрицы
+      mat.forEach((row, i) => {
+        str += `Ур.${i+1}: `.padStart(6);
+        row.forEach((val, j) => {
+          if (j < cols-1) {
+            str += val.toFixed(4).padStart(8) + " ";
+          } else {
+            str += "| " + val.toFixed(4).padStart(8);
+          }
+        });
+        str += "\n";
+      });
+      
+      return str;
+    }
+
     // -------------------- Отображение результатов --------------------
     function displayResults() {
       const tbody = document.getElementById("resultsTable").querySelector("tbody");
